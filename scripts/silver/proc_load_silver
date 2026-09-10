@@ -1,0 +1,1497 @@
+/*
+====================================================================================
+Before doing anything we have to check the quality issues of our Bronze Layer!
+====================================================================================
+Checking Bronze Layer Tables One by One
+---------------------------------------
+Check for NULLs or duplicates in PRIMARY KEY
+Expectations: No Result
+
+QUALITY CHECK
+-------------
+PRIMARY KEY must be unique and NOT NULL
+*/
+
+SELECT
+	cst_id,
+	COUNT(*)
+FROM bronze.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1 OR cst_id IS NULL
+
+-- Taking a sample from the duplicated values, try to figure out how to pick one 
+
+SELECT *
+FROM bronze.crm_cust_info
+WHERE cst_id = 29449;
+
+
+/*
+Taking a sample from the duplicated values, try to figure out how to pick one 
+EX:
+Using the most recent record to pick!
+considering the last date!
+
+ROW_NUMBER()
+Assigns a unique number to each row in a result set, based on a defined order
+*/
+
+SELECT *,
+ROW_NUMBER() OVER(PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+FROM bronze.crm_cust_info
+
+-- Check!
+SELECT *
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER(PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+	FROM bronze.crm_cust_info
+    WHERE cst_id IS NOT NULL ) AS t 
+WHERE flag_last = 1;
+
+/*
+------------------------------------------------------------------------------------
+QUALITY CHECK
+-------------
+Check for unwanted spaces in string values
+Removes unnecessary spaces to ensure data consistency, and uniformity across all records
+Expectations: No Result
+
+TRIM()
+Removes leading and trailing spaces from a string
+
+If the original value is not equal to the same value after trimming,
+it means there are spaces! */
+
+SELECT 
+	cst_id,
+	cst_firstname
+FROM bronze.crm_cust_info
+WHERE cst_firstname != TRIM(cst_firstname);
+
+SELECT 
+	cst_id,
+	cst_lastname
+FROM bronze.crm_cust_info
+WHERE cst_lastname != TRIM(cst_lastname);
+
+SELECT 
+	cst_id,
+	cst_gndr
+FROM bronze.crm_cust_info
+WHERE cst_gndr != TRIM(cst_gndr);
+
+-- You can apply this Query on any string you have
+/*
+------------------------------------------------------------------------------------
+QUALITY CHECK
+-------------
+Check the consistency of values in low cardinality columns
+Expectations: No Result
+
+Data Standardization & Normalization
+Maps coded values to meaningful, user-friendly descriptions
+In our data warehouse, we aim to store clean and meaningful values
+rather than using abbreviated terms 
+
+In our data warehouse, we use the default 'n/a'
+for missing values
+*/
+
+SELECT DISTINCT cst_gndr
+FROM bronze.crm_cust_info --> OutPut: NULL, F, M 
+                          --> So, Instead of M --> Male, F --> Female
+						  --> Apply UPPER() just in case mixed-case values appear later in your column
+						  --> Apply TRIM() just in case spaces appear later in your column
+
+
+SELECT DISTINCT cst_marital_status
+FROM bronze.crm_cust_info --> OutPut: NULL, S, M 
+                          --> So, Instead of M --> Married, S --> Single
+						  --> Apply UPPER() just in case mixed-case values appear later in your column
+						  --> Apply TRIM() just in case spaces appear later in your column
+
+SELECT 
+	cst_id,
+	cst_key,
+	TRIM(cst_firstname) AS cst_firstname,
+	TRIM(cst_lastname) AS cst_lastname,
+	CASE WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+	     WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+	ELSE 'N/A'
+	END AS cst_marital_status,
+	CASE WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+	     WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+	ELSE 'N/A'
+	END AS cst_gndr,
+	CONVERT(DATE, cst_create_date, 103) AS cst_create_date
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER(PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+	FROM bronze.crm_cust_info
+    ) AS t 
+WHERE flag_last = 1
+
+-- Then Insert Step
+TRUNCATE TABLE silver.crm_cust_info;
+INSERT INTO silver.crm_cust_info(
+	cst_id,
+	cst_key,
+	cst_firstname,
+	cst_lastname,
+	cst_marital_status,
+	cst_gndr,
+	cst_create_date)
+SELECT 
+	cst_id,
+	cst_key,
+	TRIM(cst_firstname) AS cst_firstname,
+	TRIM(cst_lastname) AS cst_lastname,
+	CASE WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+	     WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+	ELSE 'N/A'
+	END AS cst_marital_status,
+	CASE WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+	     WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+	ELSE 'N/A'
+	END AS cst_gndr,
+	CONVERT(DATE, cst_create_date, 103) AS cst_create_date
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER(PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+	FROM bronze.crm_cust_info
+    WHERE cst_id IS NOT NULL ) AS t 
+WHERE flag_last = 1 
+
+SELECT * FROM silver.crm_cust_info
+
+/*
+======================================================================================
+Quality of Silver
+Rerun the quality check queries from the Bronze Layer
+to verify the quality of data in the Silver Layer
+*/
+
+SELECT
+	cst_id,
+	COUNT(*)
+FROM silver.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1 OR cst_id IS NULL
+
+----------------------------------------------
+
+SELECT 
+	cst_id,
+	cst_firstname
+FROM silver.crm_cust_info
+WHERE cst_firstname != TRIM(cst_firstname);
+
+--------------------------
+
+SELECT 
+	cst_id,
+	cst_lastname
+FROM silver.crm_cust_info
+WHERE cst_lastname != TRIM(cst_lastname);
+
+SELECT 
+	cst_id,
+	cst_gndr
+FROM silver.crm_cust_info
+WHERE cst_gndr != TRIM(cst_gndr);
+
+------------------------------------------------------
+
+SELECT DISTINCT cst_gndr
+FROM silver.crm_cust_info 
+
+
+SELECT DISTINCT cst_marital_status
+FROM silver.crm_cust_info
+
+SELECT * FROM silver.crm_cust_info
+WHERE cst_id IS NULL
+
+/*
+===========================================================================================
+Data Cleansing - Transformations  Steps | Done in this Table
+===========================================================================================
+- Remove Unwanted spaces in string values
+  Removes unnecessary spaces to ensure data consistency, and uniformity across all records
+
+- Data Normalization & Standardization
+  Maps coded values to meaningful, user-friendly descriptions
+
+- Handling Missing Data
+  Fills in the blanks by adding a default
+
+- Remove Duplicates
+  Ensure only one record per entity by identifying 
+  and retainig the most relevant row.
+
+- Data Filtering
+
+===========================================================================================
+Build Silver Layer | Clean & Load | crm_prd_info
+=========================================================================================== */
+-- Check the PK for duplicates or NULLS 
+
+SELECT
+	prd_id,
+	COUNT(*) 
+FROM bronze.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1 OR prd_id IS NULL
+
+--------------------------------------------------------------------------------------------------
+/*
+The second column prd_key 'CO-RF-FR-R92B-58' We need to split this into 2 columns 
+Using SUBSTRING()
+Extracts a specific part of a string value
+*/
+SELECT 
+	prd_id,
+	prd_key, 
+	SUBSTRING(prd_key, 1, 5) AS cat_id
+FROM bronze.crm_prd_info
+
+-- We have information about category_id in another source system table --> bronze.erp_px_cat_g1v2
+-- checking the format in the other table in order to be able to join them both in the Gold Layer
+
+SELECT DISTINCT ID
+FROM bronze.erp_px_cat_g1v2 --> OutPut: AC_BC 
+                            --> But in bronze.crm_prd_info (cat_id) is like CO-RF
+							--> So We need to replace '-' with '_' to be able to JOIN the tables
+SELECT 
+	prd_id,
+	prd_key, 
+	Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id
+FROM bronze.crm_prd_info
+
+-- Check matching with bronze.erp_px_cat_g1v2
+-- Filters out unmatched data after applying transformation 
+SELECT 
+	prd_id,
+	prd_key, 
+	Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id
+FROM bronze.crm_prd_info
+WHERE Replace(SUBSTRING(prd_key, 1, 5), '-', '_') NOT IN (SELECT DISTINCT ID
+FROM bronze.erp_px_cat_g1v2 )
+
+-- Extract the second part of bronze.crm_prd_info (prd_key)
+
+SELECT 
+	prd_id,
+	prd_key, 
+	Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id,
+	SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key
+FROM bronze.crm_prd_info
+
+-- We have information about prd_key in another source system table --> bronze.crm_sales_details (sls_prd_key)
+-- checking the format in the other table in order to be able to join them both in the Gold Layer
+
+SELECT 
+	prd_id,
+	SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key
+FROM bronze.crm_prd_info
+WHERE SUBSTRING(prd_key, 7, LEN(prd_key)) IN (
+	SELECT sls_prd_key
+	FROM bronze.crm_sales_details 
+)
+
+/*
+-----------------------------------------------------------------------------------------------------
+The next column prd_nm 'HL Road Frame - Black- 58' --> String
+QUALITY CHECK
+-------------
+Check for unwanted spaces in string values */
+
+SELECT 
+	prd_id,
+	prd_nm
+FROM bronze.crm_prd_info
+WHERE prd_nm != TRIM(prd_nm)  --> OutPut: Nothing 
+
+/*
+-----------------------------------------------------------------------------------------------------
+The next column prd_cost --> Numbers
+QUALITY CHECK
+-------------
+Check for NULLs or Negative Numbers */
+
+SELECT 
+	prd_id,
+	prd_nm,
+	prd_cost
+FROM bronze.crm_prd_info
+WHERE prd_cost IS NULL OR prd_cost != ABS(prd_cost)
+
+-- Baraa Suggestion 
+SELECT 
+	prd_id,
+	prd_nm,
+	prd_cost
+FROM bronze.crm_prd_info
+WHERE prd_cost IS NULL OR prd_cost < 0  --> OutPut: NULLs
+
+-- Replace NULLs with 0
+
+SELECT 
+	prd_id,
+	prd_nm,
+	COALESCE(prd_cost, 0) AS prd_cost
+FROM bronze.crm_prd_info
+
+/*
+-----------------------------------------------------------------------------------------------------
+The next column prd_line --> Abbreviation
+QUALITY CHECK
+-------------
+Check for the possible values */
+
+SELECT DISTINCT
+	prd_line
+FROM bronze.crm_prd_info --> OutPut: NULL, M, R, S, T
+
+/*
+In our data warehouse, we aim to store clean and meaningful values
+rather than using abbreviated terms 
+
+In this case we ask the expert from the source system or
+an expert from the process */
+
+SELECT DISTINCT
+	CASE UPPER(TRIM(prd_line))
+		WHEN 'M' THEN 'Mountain'
+		WHEN 'R' THEN 'Road'
+		WHEN 'S' THEN 'Other Sales'
+		WHEN 'T' THEN 'Touring'
+	    ELSE 'N/A'
+	END AS prd_line
+FROM bronze.crm_prd_info 
+
+/*
+-----------------------------------------------------------------------------------------------------
+The next two columns prd_start_dt and prd_end_dt 
+QUALITY CHECK
+-------------
+Check the quality of both columns
+End date must not be earlier than the start date */
+
+SELECT *
+FROM bronze.crm_prd_info
+WHERE CONVERT(DATETIME, prd_end_dt, 103) < prd_start_dt --> OutPut: Data Issue!
+
+/*
+For complex transformation in SQL, I typically narrow it down
+to a specific example and brainstorm multiple solution approaches - Baraa Salkini 
+
+Grapping few examples into excel and trying to think about how to fix it 
+
+Solution #1: Switch End Date with Start Date 
+	 Issues:
+		The dates are overlapping !!
+		Each Record must has a Start Date !!
+
+Solution #2: Derive the End Date from the Start Date
+			 End Date = Start Date of the 'NEXT' Record - 1
+	 Issues: None
+	*/
+
+-- Building the logic first on few rows 
+-- LEAD() Access values from the next row within a window 
+SELECT 
+	prd_id,
+	prd_key,
+	prd_nm,
+	prd_start_dt,
+	--prd_end_dt,
+	LEAD(prd_start_dt) OVER(PARTITION BY prd_key ORDER BY prd_start_dt ASC ) AS prd_end_dt_test
+FROM bronze.crm_prd_info
+WHERE prd_key IN ('AC-HE-HL-U509-R', 'AC-HE-HL-U509')
+
+/*
+================================================================================================== 
+Silver Layer | Final Cleaned Product Information
+*/
+
+SELECT 
+	prd_id,
+	prd_key,
+	Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id,
+	SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,
+	prd_nm,
+	COALESCE(prd_cost, 0) AS prd_cost,
+	CASE UPPER(TRIM(prd_line))
+		WHEN 'M' THEN 'Mountain'
+		WHEN 'R' THEN 'Road'
+		WHEN 'S' THEN 'Other Sales'
+		WHEN 'T' THEN 'Touring'
+	    ELSE 'N/A'
+	END AS prd_line,
+	CAST(prd_start_dt AS DATE) AS prd_start_dt,  -- We don't have time info in our data so, no need for DATETIME
+	CAST(LEAD(prd_start_dt) OVER(PARTITION BY prd_key ORDER BY prd_start_dt ASC ) AS DATE) AS prd_end_dt
+FROM bronze.crm_prd_info
+
+----------------------------------------------------------------------------------------
+-- Go and Modify the DDl of this Table with the new Structure
+
+IF OBJECT_ID('silver.crm_prd_info', 'U') IS NOT NULL
+    DROP TABLE silver.crm_prd_info;
+GO
+
+CREATE TABLE silver.crm_prd_info (
+    prd_id          INT,
+    cat_id          NVARCHAR(50),
+    prd_key         NVARCHAR(50),
+    prd_nm          NVARCHAR(50),
+    prd_cost        INT,
+    prd_line        NVARCHAR(50),
+    prd_start_dt    DATE,
+    prd_end_dt      DATE,
+    dwh_create_date DATETIME2 DEFAULT GETDATE()
+);
+
+----------------------------------------------------------------------------------------
+-- Insert The Cleaned Data Into Silver Table 
+TRUNCATE TABLE silver.crm_prd_info;
+
+INSERT INTO silver.crm_prd_info (
+    prd_id,
+    cat_id,
+	prd_key,
+    prd_nm,
+    prd_cost,
+    prd_line,
+    prd_start_dt,
+    prd_end_dt
+) 
+SELECT 
+	prd_id,
+	Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id,
+	SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,
+	prd_nm,
+	COALESCE(prd_cost, 0) AS prd_cost,
+	CASE UPPER(TRIM(prd_line))
+		WHEN 'M' THEN 'Mountain'
+		WHEN 'R' THEN 'Road'
+		WHEN 'S' THEN 'Other Sales'
+		WHEN 'T' THEN 'Touring'
+	    ELSE 'N/A'
+	END AS prd_line,
+	CAST(prd_start_dt AS DATE) AS prd_start_dt,  -- We don't have time info in our data so, no need for DATETIME
+	CAST(LEAD(prd_start_dt) OVER(PARTITION BY prd_key ORDER BY prd_start_dt ASC ) AS DATE) AS prd_end_dt
+FROM bronze.crm_prd_info
+
+----------------------------------------------------------------------------------------------------------------
+-- Quality check of the Silver Layer
+
+
+SELECT
+	prd_id,
+	COUNT(*)
+FROM silver.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1 OR prd_id IS NULL
+
+/*
+===========================================================================================
+Data Cleansing - Transformations  Steps | Done in this Table
+===========================================================================================
+- Derived Columns
+  Create new columns based on calculations or transformations of existing ones
+
+- Handling Missing Data
+  Fills in the blanks by adding a default
+
+- Data Normalization & Standardization
+  Maps coded values to meaningful, user-friendly descriptions
+
+- Data Type Casting 
+
+- Data Enrichment
+  Add new, relevant data to enhance the dataset for analysis
+
+===========================================================================================
+Build Silver Layer | Clean & Load | crm_sales_details
+=========================================================================================== */
+
+-- First column sls_ord_num --> String
+-- Check for Unwanted Spaces
+
+SELECT 
+	sls_ord_num
+FROM bronze.crm_sales_details
+WHERE sls_ord_num != TRIM(sls_ord_num);  --> OutPut: Nothing
+
+-------------------------------------------------------------------------------------------
+-- The next two columns sls_prd_key INT, sls_cust_id VRACHAR are IDs & Keys in order to connect 
+-- them with other columns
+-- Check their integrity
+
+SELECT
+     sls_ord_num,
+	 sls_prd_key,
+	 sls_cust_id
+FROM bronze.crm_sales_details
+WHERE sls_prd_key NOT IN (
+	SELECT prd_key 
+	FROM silver.crm_prd_info     --> OutPut: Nothing
+	)
+OR sls_cust_id NOT IN (
+	SELECT cst_id
+	FROM silver.crm_cust_info
+	)                            --> OutPut: Nothing
+
+------------------------------------------------------------------------------------------	   
+-- The next column sls_order_dt --> INT
+-- Be careful while converting INT into a date 
+-- Negative or Zeros can't be cast to a date
+
+SELECT
+	sls_order_dt
+FROM bronze.crm_sales_details
+WHERE sls_order_dt <= 0  --> OutPut: A lot of Zeros
+
+-- Convert zeros Into NULLS !
+-- NULLIF() Returns NULL iif two given values are equal, otherwise, it returns the first expression
+
+SELECT
+	NULLIF (sls_order_dt, 0) AS sls_order_dt
+FROM bronze.crm_sales_details
+WHERE sls_order_dt <= 0 
+
+-- Check the format 20101229 --> year month day
+-- In this scenario the length of the date must be 8!
+
+SELECT
+	NULLIF (sls_order_dt, 0) AS sls_order_dt
+FROM bronze.crm_sales_details
+WHERE sls_order_dt <= 0 OR LEN(sls_order_dt) != 8  --> OutPut: 32154, 4589 !!!!!!!
+
+-- Check for outliers by validating the boundaries of the date range 
+
+SELECT
+	NULLIF (sls_order_dt, 0) AS sls_order_dt
+FROM bronze.crm_sales_details
+WHERE  sls_order_dt > 20500101  --> OutPut: Nothing
+
+-- Solution:
+SELECT
+	CASE WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
+	ELSE sls_order_dt
+	END AS sls_order_dt
+FROM bronze.crm_sales_details
+
+-- Convert sls_order_dt into DATE | Firstly CAST AS VARCHAR then AS DATE --> Why?
+SELECT
+	CASE WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
+	ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE)
+	END AS sls_order_dt
+FROM bronze.crm_sales_details
+
+------------------------------------------------------------------------------------------
+-- Same steps for the next two columns sls_ship_dt, sls_due_dt
+
+SELECT 
+	CASE WHEN sls_ship_dt = 0 OR LEN(sls_ship_dt) != 8 THEN NULL  -- I forgot to use LEN() Function !! --> Outputs NULLs through the whole column
+	ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE)
+	END AS sls_ship_dt,
+
+	CASE WHEN sls_due_dt = 0 OR LEN(sls_due_dt) != 8 THEN NULL
+	ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE)
+	END AS sls_due_dt
+FROM bronze.crm_sales_details
+
+-- Order Date must always be earlier than the Shipping Date or Due Date!!
+-- Check for invalid Date Orders
+SELECT *
+FROM bronze.crm_sales_details
+WHERE sls_order_dt > sls_ship_dt OR sls_order_dt > sls_due_dt;   -- OutPut: Nothing 
+
+/*
+------------------------------------------------------------------------------------------	   
+The last columns sls_sales, sls_quantity, sls_price --> INT
+Business Rules
+	- Total Sales = Quantity * Price
+	- Negatives, Zeros, NULLs are NOT ALLOWED */
+
+-- Check the data consistency acc to these rules
+
+SELECT DISTINCT
+	 sls_sales,
+	 sls_quantity,
+	 sls_price
+FROM bronze.crm_sales_details
+WHERE sls_sales != sls_quantity * sls_price
+OR sls_sales    IS NULL
+OR sls_quantity IS NULL
+OR sls_price    IS NULL
+OR sls_sales    <= 0
+OR sls_quantity <= 0
+OR sls_price    <= 0
+ORDER BY sls_sales, sls_quantity, sls_price
+
+/*
+From OutPut: 
+	The quality of sales and price is wrong | bad
+    The calculation is not working
+Solution: 
+	We have to talk to an expert from the business or the source system
+	Showing this Scenario to them & Discuss
+	Usually we will get two answers:
+		- Data issues will be fixed direct in source system
+		  Bad data will be presented in the WareHouse untill the source system clean it 
+		- Data issues has to be fixed in DataWarehouse!!
+		  Ask the expert to support in improving these issues according to the business rules
+Rules:
+	If Sales is negative, zero, or NULL Derive it using Quantity and Price!
+	If Price is zero, or NULL Derive it using Sales and Quantity!
+	If Price is negative, Convert it to a positive value! */
+
+SELECT DISTINCT
+	 sls_sales AS old_sls_sales ,
+	 sls_quantity,
+	 sls_price AS old_sls_price,
+	 CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+	      THEN sls_quantity * ABS(sls_price)
+		  ELSE sls_sales
+	 END AS sls_sales,
+	 CASE WHEN sls_price IS NULL OR sls_price <= 0 
+	      THEN sls_sales / NULLIF(sls_quantity, 0) 
+		  ELSE sls_price
+	 END AS sls_price
+FROM bronze.crm_sales_details
+WHERE sls_sales != sls_quantity * sls_price
+OR sls_sales    IS NULL
+OR sls_quantity IS NULL
+OR sls_price    IS NULL
+OR sls_sales    <= 0
+OR sls_quantity <= 0
+OR sls_price    <= 0
+ORDER BY sls_sales, sls_quantity, sls_price
+
+/*
+==========================================================================================
+*/
+
+SELECT
+     sls_ord_num,
+	 sls_prd_key,
+	 sls_cust_id,
+	 CASE WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
+		  ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE)
+	      END AS sls_order_dt,
+	 CASE WHEN sls_ship_dt = 0 OR LEN(sls_ship_dt) != 8 THEN NULL  -- I forgot to use LEN() Function !! --> Outputtes NULLs through the whole column
+		  ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE)
+	      END AS sls_ship_dt,
+     CASE WHEN sls_due_dt = 0 OR LEN(sls_due_dt) != 8 THEN NULL
+	      ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE)
+	      END AS sls_due_dt,
+	 CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+	      THEN sls_quantity * ABS(sls_price)
+		  ELSE sls_sales
+	 END AS sls_sales,
+	 sls_quantity,
+	 CASE WHEN sls_price IS NULL OR sls_price <= 0 
+	      THEN sls_sales / NULLIF(sls_quantity, 0) 
+		  ELSE sls_price
+	 END AS sls_price
+FROM bronze.crm_sales_details
+
+----------------------------------------------------------------------------------------
+-- Insert The Cleaned Data Into Silver Table 
+
+TRUNCATE TABLE silver.crm_sales_details;
+
+INSERT INTO silver.crm_sales_details(
+	   sls_ord_num,
+	   sls_prd_key,
+	   sls_cust_id,
+	   sls_order_dt,
+	   sls_ship_dt,
+	   sls_due_dt,
+	   sls_sales,
+	   sls_quantity,
+	   sls_price
+)
+SELECT
+     sls_ord_num,
+	 sls_prd_key,
+	 sls_cust_id,
+	 CASE WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
+		  ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE)
+	      END AS sls_order_dt,
+	 CASE WHEN sls_ship_dt = 0 OR LEN(sls_ship_dt) != 8 THEN NULL  -- I forgot to use LEN() Function !! --> Outputtes NULLs through the whole column
+		  ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE)
+	      END AS sls_ship_dt,
+     CASE WHEN sls_due_dt = 0 OR LEN(sls_due_dt) != 8 THEN NULL
+	      ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE)
+	      END AS sls_due_dt,
+	 CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+	      THEN sls_quantity * ABS(sls_price)
+		  ELSE sls_sales
+	 END AS sls_sales,
+	 sls_quantity,
+	 CASE WHEN sls_price IS NULL OR sls_price <= 0 
+	      THEN sls_sales / NULLIF(sls_quantity, 0) 
+		  ELSE sls_price
+	 END AS sls_price
+FROM bronze.crm_sales_details;
+
+
+SELECT *
+FROM silver.crm_sales_details
+----------------------------------------------------------------------------------------------------------------
+-- Quality check of the Silver Layer
+
+/*
+===========================================================================================
+Data Cleansing - Transformations  Steps | Done in this Table
+===========================================================================================
+- Handling Invalid Data & Data Type Casting
+
+- Handling Missing Data & Invalid Data
+  By Deriving the Column from Already Existing One 
+
+===========================================================================================
+Build Silver Layer | Clean & Load | erp_cust_az12
+=========================================================================================== */
+
+-- From or model we can connect this table with table crm_cust_info using cst_key column
+-- We have to check if we able to connect both tables
+
+SELECT
+	cid,
+	bdate,
+	gen
+FROM bronze.erp_cust_az12;  -- cid : NASAW00011000 --> Extra Characters
+
+SELECT *
+FROM silver.crm_cust_info;  -- cst_id: 11015 | cst_key: AW00011015
+
+SELECT
+	cid,
+	bdate,
+	gen
+FROM bronze.erp_cust_az12
+WHERE cid LIKE '%AW00011015'  -- Output: NASAW00011015
+
+-- So, we found that cids have extra NAS as aperifix but other don't
+-- We have to remove these 3 letters in order to be able to join the 2 tables 
+
+SELECT
+	cid AS cid_old,
+	CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+	ELSE cid
+	END AS cid,
+	bdate,
+	gen
+FROM bronze.erp_cust_az12
+
+-- Compare or check the other table 
+SELECT
+	cid AS cid_old,
+	CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+	ELSE cid
+	END AS cid,
+	bdate,
+	gen
+FROM bronze.erp_cust_az12
+WHERE 	CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+	ELSE cid
+	END NOT IN (
+		SELECT DISTINCT
+		cst_key
+		FROM silver.crm_cust_info
+	)   -- OutPut: Nothing
+--------------------------------------------------------------------------------------------
+-- The next column bdate DATETIME
+SELECT
+	CAST(bdate AS DATE) AS bdate,  
+	gen
+FROM bronze.erp_cust_az12
+
+-- Check if it is out of the range !
+
+SELECT DISTINCT
+	CAST(bdate AS DATE) AS bdate
+FROM bronze.erp_cust_az12
+WHERE CAST(bdate AS DATE) < '1924-01-01' --> Check for very old customers | Depend on the business
+OR    CAST(bdate AS DATE) > GETDATE()    --> Check for bdate in the future 
+
+/*
+From OutPut: 2050-11-22, 1916-02-10   --> Many  bdates out of range 
+Solution:
+	- Leave as it is as a bad data 
+	- Clean up by replacing those dates with a NULL
+	- Or replace the extreme | 100% is incorrect like 2050-11-22!
+*/
+
+SELECT 
+	CASE WHEN CAST(bdate AS DATE) > GETDATE() THEN NULL
+		 ELSE CAST(bdate AS DATE)
+	END AS bdate
+FROM bronze.erp_cust_az12
+
+--------------------------------------------------------------------------------------------
+-- The next column gen NVARCHAR --> Low cardinality column
+-- Check the possible values | Data standrdization & Consistency
+
+SELECT DISTINCT
+	gen
+FROM bronze.erp_cust_az12
+
+-- From OutPut: NULL, F, M, Male, Female, Blank
+-- Solution:
+
+SELECT
+	gen,
+	CASE WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+		 WHEN UPPER(TRIM(gen)) IN ('M', 'MALE')   THEN 'Male'
+		 ELSE 'N/A'
+	END AS gen
+FROM bronze.erp_cust_az12
+
+--==========================================================================================
+SELECT
+	CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+		 ELSE cid
+	END AS cid,
+	CASE WHEN CAST(bdate AS DATE) > GETDATE() THEN NULL
+		 ELSE CAST(bdate AS DATE)
+	END AS bdate,
+	CASE WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+		 WHEN UPPER(TRIM(gen)) IN ('M', 'MALE')   THEN 'Male'
+		 ELSE 'N/A'
+	END AS gen
+FROM bronze.erp_cust_az12
+
+-- Update DDL
+----------------------------------------------------------------------------------------
+-- Insert The Cleaned Data Into Silver Table 
+TRUNCATE TABLE silver.erp_cust_az12;
+
+INSERT INTO silver.erp_cust_az12(
+	cid,
+	bdate,
+	gen
+) 
+SELECT
+	CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+		 ELSE cid
+	END AS cid,
+	CASE WHEN CAST(bdate AS DATE) > GETDATE() THEN NULL
+		 ELSE CAST(bdate AS DATE)
+	END AS bdate,
+	CASE WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+		 WHEN UPPER(TRIM(gen)) IN ('M', 'MALE')   THEN 'Male'
+		 ELSE 'N/A'
+	END AS gen
+FROM bronze.erp_cust_az12;
+
+SELECT *
+FROM silver.erp_cust_az12
+ORDER BY bdate ASC
+----------------------------------------------------------------------------------------------------------------
+-- Quality check of the Silver Layer
+
+/*
+===========================================================================================
+Data Cleansing - Transformations  Steps | Done in this Table
+===========================================================================================
+- Handling Invalid Data & Data Type Casting
+
+- Data Normalization & Standrdization 
+
+- Handling Missing Data & Invalid Data
+
+===========================================================================================
+Build Silver Layer | Clean & Load | erp_cust_loc_a101
+=========================================================================================== */
+-- From or model we can connect this table with table crm_cust_info using cst_key column
+-- We have to check if we able to connect both tables
+
+SELECT
+	CID
+FROM bronze.erp_loc_a101;  -- AW-00011000 
+
+SELECT cst_key
+FROM silver.crm_cust_info  -- AW00011003
+
+-- Solution:
+SELECT
+	CID AS CID_OLD,
+	REPLACE(CID, '-', '') AS CID
+FROM bronze.erp_loc_a101
+
+-- Check
+
+SELECT
+	CID AS CIDOLD
+FROM bronze.erp_loc_a101
+WHERE REPLACE(CID, '-', '') NOT IN (
+	SELECT cst_key
+	FROM silver.crm_cust_info
+)
+
+----------------------------------------------------------------------------------------------------
+-- Second Column cntry NVARCHAR
+
+SELECT DISTINCT
+	CNTRY
+FROM bronze.erp_loc_a101
+
+-- From OutPut: DE, USA, Germany, United States, NULL, Australia, United Kingdom,  , Canada, France, US
+
+SELECT
+	CNTRY AS CNTRY_OLD,
+	CASE WHEN TRIM(CNTRY) = 'DE' THEN 'Germany'
+		 WHEN TRIM(CNTRY) IN ('USA', 'US') THEN 'United States'
+		 WHEN TRIM(CNTRY) = '' OR CNTRY IS NULL THEN 'N/A'
+		 ELSE CNTRY
+	END AS cntry	 
+FROM bronze.erp_loc_a101
+ORDER BY cntry
+
+--==================================================================================================
+-- Final 
+
+SELECT
+	REPLACE(CID, '-', '') AS cid,
+	CASE WHEN TRIM(CNTRY) = 'DE' THEN 'Germany'
+		 WHEN TRIM(CNTRY) IN ('USA', 'US') THEN 'United States'
+		 WHEN TRIM(CNTRY) = '' OR CNTRY IS NULL THEN 'N/A'
+		 ELSE CNTRY
+	END AS cntry	
+FROM bronze.erp_loc_a101
+ORDER BY cntry
+
+----------------------------------------------------------------------------------------
+-- Insert The Cleaned Data Into Silver Table 
+TRUNCATE TABLE silver.erp_loc_a101;
+
+INSERT INTO silver.erp_loc_a101 (
+	cid,
+	cntry
+)
+SELECT
+	REPLACE(CID, '-', '') AS cid,
+	CASE WHEN TRIM(CNTRY) = 'DE' THEN 'Germany'
+		 WHEN TRIM(CNTRY) IN ('USA', 'US') THEN 'United States'
+		 WHEN TRIM(CNTRY) = '' OR CNTRY IS NULL THEN 'N/A'
+		 ELSE CNTRY
+	END AS cntry	
+FROM bronze.erp_loc_a101
+ORDER BY cntry;
+
+SELECT * FROM silver.erp_loc_a101;
+------------------------------------------------------------------------------------------
+-- Quality check of the Silver Layer
+
+/*
+===========================================================================================
+Data Cleansing - Transformations  Steps | Done in this Table
+===========================================================================================
+- Handling Invalid Data 
+
+- Data Normalization & Standrdization 
+
+- Handling Missing Data
+
+- Removing the UnWanted Spaces
+
+===========================================================================================
+Build Silver Layer | Clean & Load | erp_px_cat_g1v2
+=========================================================================================== */
+-- From or model we can connect this table with table silver.crm_prd_info using id column
+-- We have to check if we able to connect both tables
+
+
+SELECT 
+	id        -- AC_BR
+FROM bronze.erp_px_cat_g1v2
+WHERE id NOT IN (
+	SELECT cat_id
+	FROM silver.crm_prd_info) 
+
+SELECT 
+*     -- cat_id  AC_BC
+FROM silver.crm_prd_info
+
+--------------------------------------------------------------------------------------------
+-- Next columns cat, subcat, maintenance NVARCHAR
+
+-- Check for Unwanted spaces
+SELECT *
+FROM bronze.erp_px_cat_g1v2
+WHERE cat != TRIM(cat) OR subcat != TRIM(subcat) OR maintenance = TRIM(maintenance)
+
+
+-- Data Standrdization & Consistency
+SELECT DISTINCT
+	cat
+FROM bronze.erp_px_cat_g1v2
+
+SELECT DISTINCT
+	subcat
+FROM bronze.erp_px_cat_g1v2
+
+SELECT DISTINCT
+	maintenance
+FROM bronze.erp_px_cat_g1v2       -- No cahnge or cleaning
+
+
+SELECT 
+	id,
+	cat,
+	subcat,
+	maintenance
+FROM bronze.erp_px_cat_g1v2
+
+----------------------------------------------------------------------------------------
+-- Insert The Cleaned Data Into Silver Table 
+
+TRUNCATE TABLE  silver.erp_px_cat_g1v2;
+
+INSERT INTO  silver.erp_px_cat_g1v2 
+(
+	id,
+	cat,
+	subcat,
+	maintenance
+)
+SELECT 
+	id,
+	cat,
+	subcat,
+	maintenance
+FROM bronze.erp_px_cat_g1v2;
+
+SELECT *
+FROM silver.erp_px_cat_g1v2;
+
+/*
+=========================================================================================
+=========================================================================================
+FULL SCRIPT
+=========================================================================================
+=========================================================================================
+*/
+
+
+PRINT '>> Truncating Table silver.crm_cust_info'
+TRUNCATE TABLE silver.crm_cust_info;
+
+PRINT '>> Inserting Data Into: silver.crm_cust_info'
+INSERT INTO silver.crm_cust_info(
+	cst_id,
+	cst_key,
+	cst_firstname,
+	cst_lastname,
+	cst_marital_status,
+	cst_gndr,
+	cst_create_date)
+SELECT 
+	cst_id,
+	cst_key,
+	TRIM(cst_firstname) AS cst_firstname,
+	TRIM(cst_lastname) AS cst_lastname,
+	CASE WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+	     WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+	ELSE 'N/A'
+	END AS cst_marital_status,
+	CASE WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+	     WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+	ELSE 'N/A'
+	END AS cst_gndr,
+	CONVERT(DATE, cst_create_date, 103) AS cst_create_date
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER(PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+	FROM bronze.crm_cust_info
+    WHERE cst_id IS NOT NULL ) AS t 
+WHERE flag_last = 1 
+----------------------------------------------------------------------------------------
+PRINT '>> Truncating Table silver.crm_prd_info'
+TRUNCATE TABLE silver.crm_prd_info;
+
+PRINT '>> Inserting Data Into: silver.crm_prd_info'
+INSERT INTO silver.crm_prd_info (
+    prd_id,
+    cat_id,
+	prd_key,
+    prd_nm,
+    prd_cost,
+    prd_line,
+    prd_start_dt,
+    prd_end_dt
+) 
+SELECT 
+	prd_id,
+	Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id,
+	SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,
+	prd_nm,
+	COALESCE(prd_cost, 0) AS prd_cost,
+	CASE UPPER(TRIM(prd_line))
+		WHEN 'M' THEN 'Mountain'
+		WHEN 'R' THEN 'Road'
+		WHEN 'S' THEN 'Other Sales'
+		WHEN 'T' THEN 'Touring'
+	    ELSE 'N/A'
+	END AS prd_line,
+	CAST(prd_start_dt AS DATE) AS prd_start_dt,  -- We don't have time info in our data so, no need for DATETIME
+	CAST(LEAD(prd_start_dt) OVER(PARTITION BY prd_key ORDER BY prd_start_dt ASC ) AS DATE) AS prd_end_dt
+FROM bronze.crm_prd_info
+----------------------------------------------------------------------------------------------------------------
+PRINT '>> Truncating Table silver.crm_sales_details'
+TRUNCATE TABLE silver.crm_sales_details;
+
+PRINT '>> Inserting Data Into: silver.crm_sales_details'
+INSERT INTO silver.crm_sales_details(
+	   sls_ord_num,
+	   sls_prd_key,
+	   sls_cust_id,
+	   sls_order_dt,
+	   sls_ship_dt,
+	   sls_due_dt,
+	   sls_sales,
+	   sls_quantity,
+	   sls_price
+)
+SELECT
+     sls_ord_num,
+	 sls_prd_key,
+	 sls_cust_id,
+	 CASE WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
+		  ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE)
+	      END AS sls_order_dt,
+	 CASE WHEN sls_ship_dt = 0 OR LEN(sls_ship_dt) != 8 THEN NULL  -- I forgot to use LEN() Function !! --> Outputtes NULLs through the whole column
+		  ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE)
+	      END AS sls_ship_dt,
+     CASE WHEN sls_due_dt = 0 OR LEN(sls_due_dt) != 8 THEN NULL
+	      ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE)
+	      END AS sls_due_dt,
+	 CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+	      THEN sls_quantity * ABS(sls_price)
+		  ELSE sls_sales
+	 END AS sls_sales,
+	 sls_quantity,
+	 CASE WHEN sls_price IS NULL OR sls_price <= 0 
+	      THEN sls_sales / NULLIF(sls_quantity, 0) 
+		  ELSE sls_price
+	 END AS sls_price
+FROM bronze.crm_sales_details;
+----------------------------------------------------------------------------------------------------------------------------
+PRINT '>> Truncating Table silver.erp_cust_az12'
+TRUNCATE TABLE silver.erp_cust_az12;
+
+PRINT '>> Inserting Data Into: silver.erp_cust_az12'
+INSERT INTO silver.erp_cust_az12(
+	cid,
+	bdate,
+	gen
+) 
+SELECT
+	CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+		 ELSE cid
+	END AS cid,
+	CASE WHEN CAST(bdate AS DATE) > GETDATE() THEN NULL
+		 ELSE CAST(bdate AS DATE)
+	END AS bdate,
+	CASE WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+		 WHEN UPPER(TRIM(gen)) IN ('M', 'MALE')   THEN 'Male'
+		 ELSE 'N/A'
+	END AS gen
+FROM bronze.erp_cust_az12;
+
+---------------------------------------------------------------------------------------------------------------------------
+PRINT '>> Truncating Table silver.erp_loc_a101'
+TRUNCATE TABLE silver.erp_loc_a101;
+
+PRINT '>> Inserting Data Into: silver.erp_loc_a101'
+INSERT INTO silver.erp_loc_a101 (
+	cid,
+	cntry
+)
+SELECT
+	REPLACE(CID, '-', '') AS cid,
+	CASE WHEN TRIM(CNTRY) = 'DE' THEN 'Germany'
+		 WHEN TRIM(CNTRY) IN ('USA', 'US') THEN 'United States'
+		 WHEN TRIM(CNTRY) = '' OR CNTRY IS NULL THEN 'N/A'
+		 ELSE CNTRY
+	END AS cntry	
+FROM bronze.erp_loc_a101
+ORDER BY cntry;
+
+---------------------------------------------------------------------------------------------------------------------------
+PRINT '>> Truncating Table: silver.erp_px_cat_g1v2'
+TRUNCATE TABLE  silver.erp_px_cat_g1v2;
+
+PRINT '>> Inserting Data Into: silver.erp_px_cat_g1v2'
+INSERT INTO  silver.erp_px_cat_g1v2 
+(
+	id,
+	cat,
+	subcat,
+	maintenance
+)
+SELECT 
+	id,
+	cat,
+	subcat,
+	maintenance
+FROM bronze.erp_px_cat_g1v2;
+
+/*
+=========================================================================================
+Create stored Procedure
+=========================================================================================
+*/
+
+CREATE OR ALTER PROCEDURE silver.load_silver AS
+BEGIN
+	DECLARE @start_time DATETIME, @end_time DATETIME, @batch_start_time DATETIME, @batch_end_time DATETIME
+	
+	BEGIN TRY
+		SET @batch_start_time = GETDATE()
+		PRINT '====================================================================================================================';
+		PRINT 'Loading Silver Layer'
+		PRINT '====================================================================================================================';
+	
+		PRINT '--------------------------------------------------------------------------------------------------------------------';
+		PRINT 'Loading CRM Tables'
+		PRINT '--------------------------------------------------------------------------------------------------------------------';
+		
+		SET @start_time = GETDATE()
+		PRINT '>> Truncating Table silver.crm_cust_info'
+		TRUNCATE TABLE silver.crm_cust_info;
+
+		PRINT '>> Inserting Data Into: silver.crm_cust_info'
+		INSERT INTO silver.crm_cust_info(
+			cst_id,
+			cst_key,
+			cst_firstname,
+			cst_lastname,
+			cst_marital_status,
+			cst_gndr,
+			cst_create_date)
+		SELECT 
+			cst_id,
+			cst_key,
+			TRIM(cst_firstname) AS cst_firstname,
+			TRIM(cst_lastname) AS cst_lastname,
+			CASE WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+				 WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+			ELSE 'N/A'
+			END AS cst_marital_status,
+			CASE WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+				 WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+			ELSE 'N/A'
+			END AS cst_gndr,
+			CONVERT(DATE, cst_create_date, 103) AS cst_create_date
+		FROM (
+			SELECT *,
+			ROW_NUMBER() OVER(PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+			FROM bronze.crm_cust_info
+			WHERE cst_id IS NOT NULL ) AS t 
+		WHERE flag_last = 1 
+		SET @end_time = GETDATE()
+		PRINT 'Load Duration: ' + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS NVARCHAR) + 'Seconds'
+		----------------------------------------------------------------------------------------
+		SET @start_time = GETDATE()
+		PRINT '>> Truncating Table silver.crm_prd_info'
+		TRUNCATE TABLE silver.crm_prd_info;
+
+		PRINT '>> Inserting Data Into: silver.crm_prd_info'
+		INSERT INTO silver.crm_prd_info (
+			prd_id,
+			cat_id,
+			prd_key,
+			prd_nm,
+			prd_cost,
+			prd_line,
+			prd_start_dt,
+			prd_end_dt
+		) 
+		SELECT 
+			prd_id,
+			Replace(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id,
+			SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,
+			prd_nm,
+			COALESCE(prd_cost, 0) AS prd_cost,
+			CASE UPPER(TRIM(prd_line))
+				WHEN 'M' THEN 'Mountain'
+				WHEN 'R' THEN 'Road'
+				WHEN 'S' THEN 'Other Sales'
+				WHEN 'T' THEN 'Touring'
+				ELSE 'N/A'
+			END AS prd_line,
+			CAST(prd_start_dt AS DATE) AS prd_start_dt,  -- We don't have time info in our data so, no need for DATETIME
+			CAST(LEAD(prd_start_dt) OVER(PARTITION BY prd_key ORDER BY prd_start_dt ASC ) AS DATE) AS prd_end_dt
+		FROM bronze.crm_prd_info
+
+		SET @end_time = GETDATE()
+		PRINT 'Load Duration: ' + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS NVARCHAR) + 'Seconds'
+		----------------------------------------------------------------------------------------------------------------
+
+		SET @start_time = GETDATE()
+		PRINT '>> Truncating Table silver.crm_sales_details'
+		TRUNCATE TABLE silver.crm_sales_details;
+
+		PRINT '>> Inserting Data Into: silver.crm_sales_details'
+		INSERT INTO silver.crm_sales_details(
+			   sls_ord_num,
+			   sls_prd_key,
+			   sls_cust_id,
+			   sls_order_dt,
+			   sls_ship_dt,
+			   sls_due_dt,
+			   sls_sales,
+			   sls_quantity,
+			   sls_price
+		)
+		SELECT
+			 sls_ord_num,
+			 sls_prd_key,
+			 sls_cust_id,
+			 CASE WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
+				  ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE)
+				  END AS sls_order_dt,
+			 CASE WHEN sls_ship_dt = 0 OR LEN(sls_ship_dt) != 8 THEN NULL  -- I forgot to use LEN() Function !! --> Outputtes NULLs through the whole column
+				  ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE)
+				  END AS sls_ship_dt,
+			 CASE WHEN sls_due_dt = 0 OR LEN(sls_due_dt) != 8 THEN NULL
+				  ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE)
+				  END AS sls_due_dt,
+			 CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+				  THEN sls_quantity * ABS(sls_price)
+				  ELSE sls_sales
+			 END AS sls_sales,
+			 sls_quantity,
+			 CASE WHEN sls_price IS NULL OR sls_price <= 0 
+				  THEN sls_sales / NULLIF(sls_quantity, 0) 
+				  ELSE sls_price
+			 END AS sls_price
+		FROM bronze.crm_sales_details;
+
+		SET @end_time = GETDATE()
+		PRINT 'Load Duration: ' + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS NVARCHAR) + 'Seconds'
+	    
+		PRINT '--------------------------------------------------------------------------------------------------------------------';
+		PRINT 'Loading ERP Tables'
+		PRINT '--------------------------------------------------------------------------------------------------------------------';
+		
+		SET @start_time = GETDATE()
+		PRINT '>> Truncating Table silver.erp_cust_az12'
+		TRUNCATE TABLE silver.erp_cust_az12;
+
+		PRINT '>> Inserting Data Into: silver.erp_cust_az12'
+		INSERT INTO silver.erp_cust_az12(
+			cid,
+			bdate,
+			gen
+		) 
+		SELECT
+			CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+				 ELSE cid
+			END AS cid,
+			CASE WHEN CAST(bdate AS DATE) > GETDATE() THEN NULL
+				 ELSE CAST(bdate AS DATE)
+			END AS bdate,
+			CASE WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+				 WHEN UPPER(TRIM(gen)) IN ('M', 'MALE')   THEN 'Male'
+				 ELSE 'N/A'
+			END AS gen
+		FROM bronze.erp_cust_az12;
+
+		SET @end_time = GETDATE()
+		PRINT 'Load Duration: ' + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS NVARCHAR) + 'Seconds'
+		---------------------------------------------------------------------------------------------------------------------------
+		SET @start_time = GETDATE()
+		PRINT '>> Truncating Table silver.erp_loc_a101'
+		TRUNCATE TABLE silver.erp_loc_a101;
+
+		PRINT '>> Inserting Data Into: silver.erp_loc_a101'
+		INSERT INTO silver.erp_loc_a101 (
+			cid,
+			cntry
+		)
+		SELECT
+			REPLACE(CID, '-', '') AS cid,
+			CASE WHEN TRIM(CNTRY) = 'DE' THEN 'Germany'
+				 WHEN TRIM(CNTRY) IN ('USA', 'US') THEN 'United States'
+				 WHEN TRIM(CNTRY) = '' OR CNTRY IS NULL THEN 'N/A'
+				 ELSE CNTRY
+			END AS cntry	
+		FROM bronze.erp_loc_a101
+		ORDER BY cntry;
+
+		SET @end_time = GETDATE()
+		PRINT 'Load Duration: ' + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS NVARCHAR) + 'Seconds'
+		---------------------------------------------------------------------------------------------------------------------------
+		SET @start_time = GETDATE()
+		PRINT '>> Truncating Table: silver.erp_px_cat_g1v2'
+		TRUNCATE TABLE  silver.erp_px_cat_g1v2;
+
+		PRINT '>> Inserting Data Into: silver.erp_px_cat_g1v2'
+		INSERT INTO  silver.erp_px_cat_g1v2 
+		(
+			id,
+			cat,
+			subcat,
+			maintenance
+		)
+		SELECT 
+			id,
+			cat,
+			subcat,
+			maintenance
+		FROM bronze.erp_px_cat_g1v2
+		
+		SET @end_time = GETDATE()
+		PRINT 'Load Duration: ' + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS NVARCHAR) + 'Seconds'
+		PRINT'----------------------------------------------------------------------------------------------------------------'
+
+		SET @batch_end_time = GETDATE()
+		PRINT '============================================================';
+		PRINT 'Loading Bronze Layer is Completed';
+		PRINT '	  - Total Load Duration: ' + CAST(DATEDIFF(SECOND, @batch_start_time, @batch_end_time) AS NVARCHAR) + 'Seconds'
+		PRINT '============================================================';
+	END TRY 
+	BEGIN CATCH
+		PRINT'==========================================================================='
+		PRINT 'ERROR OCCURED DURING LOADING SILVER LAYER';
+		PRINT 'Error Message: ' + ERROR_MESSAGE();
+		PRINT 'Error Message: ' + CAST(ERROR_NUMBER() AS VARCHAR)
+		PRINT 'Error Message: ' + CAST(ERROR_STATE() AS VARCHAR)
+	END CATCH
+END
+
+
+EXEC silver.load_silver;
+
+
+/*
+====================================================================================================================================
+====================================================================================================================================
+Consistency
+If you introduce an improvement, like better logging or error handling, in one Stored Procedure,
+apply it to the others to maintain consistent standards and benefits */
+
+-- Our Datawarehouse
+
+EXEC bronze.load_bronze;
+
+EXEC silver.load_silver;
+-------------------------------------------------------------------------------------------------------
+
+/*
+=======================================================================================================
+Build silver Layer | Document: Extent data Flow Diagram
+=======================================================================================================
+
+=======================================================================================================
+Build silver Layer | Commit code in Git Repo
+=======================================================================================================
